@@ -2151,7 +2151,8 @@ class PSpecData(object):
             M = np.diag(1. / np.sum(G, axis=1))
             W_norm = np.diag(1. / np.sum(H, axis=1))
             W = np.dot(W_norm, H)
-        else:
+
+        elif mode == 'L^-1':
             raise NotImplementedError("Cholesky decomposition mode not currently supported.")
             # # Cholesky decomposition
             # order = np.arange(G.shape[0]) - np.ceil((G.shape[0]-1.)/2.)
@@ -2172,6 +2173,8 @@ class PSpecData(object):
             # U,S,V = np.linalg.svd(L_o.conj())
             # M_o = np.dot(np.transpose(V), np.dot(np.diag(1./S), np.transpose(U)))
             # M = np.take(np.take(M_o, iorder, axis=0), iorder, axis=1)
+        else :
+            raise ValueError("User-input M matrix must be built outside of this function.")
 
         return M, W
 
@@ -3256,6 +3259,9 @@ class PSpecData(object):
                     if norm == 'V^-1/2':
                         V_mat = self.get_unnormed_V(key1, key2, exact_norm=exact_norm, pol = pol)
                         Mv, Wv = self.get_MW(Gv, Hv, mode=norm, band_covar=V_mat, exact_norm=exact_norm)
+                    elif isinstance(norm,np.ndarray):
+                        Mv = np.copy(norm)
+                        Wv = np.dot(Mv,Hv)
                     else:
                         Mv, Wv = self.get_MW(Gv, Hv, mode=norm, exact_norm=exact_norm)
                     pv = self.p_hat(Mv, qv)
@@ -3267,7 +3273,7 @@ class PSpecData(object):
 
                     # Wide bin adjustment of scalar, which is only needed for
                     # the diagonal norm matrix mode (i.e., norm = 'I')
-                    if norm == 'I' and not(exact_norm):
+                    if (norm == 'I' or isinstance(norm,np.ndarray))  and not(exact_norm):
                         sa = self.scalar_delay_adjustment(Gv=Gv, Hv=Hv)
                         if isinstance(sa, (np.float, float)):
                             pv *= sa
