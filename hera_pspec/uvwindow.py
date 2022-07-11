@@ -335,9 +335,11 @@ class UVWindow:
         # Summary attributes: initialise attributes from UVPSpec object
 
         # cosmology
-        assert hasattr(uvp, 'cosmo'), \
-            "self.cosmo must exist to form cosmological " \
-            "wave-vectors. See uvp.set_cosmology()"
+        if not hasattr(uvp, 'cosmo'):
+            cosmo = conversions.Cosmo_Conversions()
+            warnings.warn('uvp has no cosmo attribute. Using fiducial cosmology.')
+        else:
+            cosmo = uvp.cosmo
 
         # units
         little_h = 'h^-3' in uvp.norm_units
@@ -377,7 +379,7 @@ class UVWindow:
             ftbeam_obj_pol[ip].update_spw(spw_range=spw_range)
 
         return cls(ftbeam_obj=ftbeam_obj_pol,
-                   taper=uvp.taper, cosmo=uvp.cosmo,
+                   taper=uvp.taper, cosmo=cosmo,
                    little_h=little_h, verbose=verbose)
 
     def _get_kgrid(self, bl_len, width=0.020):
@@ -558,20 +560,18 @@ class UVWindow:
             Dimensions: (nbins_kperp,nfreq).
         kperp_bins : array_like
             1D float array of ascending k_perp bin centers in [h] Mpc^-1 units.
-            Used for cylindrical binning,
-            Make sure the values are consistent with :attr:`little_h`.
+            Used for cylindrical binning. Must be linearly spaced.
         kpara_bins : array_like
             1D float array of ascending k_parallel bin centers in [h] Mpc^-1
             units.
-            Used for cylindrical binning.
-            Make sure the values are consistent with :attr:`little_h`.
+            Used for cylindrical binning. Must be linearly spaced.
 
         Returns
         ----------
         cyl_wf : array_like
             Window function as a function of (kperp,kpara).
-            Axis 0 is kperp (kperp_bins defined as global variable).
-            Axis 1 is kparallel (kpara_bins defined as global variable)
+            Axis 0 is kperp (obtained with :meth:`get_kperp_bins`).
+            Axis 1 is kparallel (obtained with :meth:`get_kpara_bins`).
         kpara : array_like
             Values of kpara corresponding to the axis=2 of cyl_wf.
             Note: these values are weighted by their number of counts
@@ -731,8 +731,8 @@ class UVWindow:
         cyl_wf : array_like
             Window function as a function of (kperp,kpara).
             Axis 0 is the array of delays considered (:attr:`dly_array`).
-            Axis 1 is kperp (kperp_bins defined as global variable).
-            Axis 2 is kparallel (kpara_bins defined as global variable).
+            Axis 1 is kperp (obtained with :meth:`get_kperp_bins`).
+            Axis 2 is kparallel (obtained with :meth:`get_kpara_bins`).
         kperp : array_like
             Values of kperp corresponding to the axis=1 of cyl_wf.
             Note: if return_bins='weighted', these values are weighted
@@ -754,6 +754,8 @@ class UVWindow:
         else:
             self.check_kunits(kperp_bins)
         kperp_bins = np.array(kperp_bins.value)
+        if not np.isclose(np.diff(kperp_bins),np.diff(kperp_bins)[0]).all():
+            warnings.warn('kperp_bins must be linearly spaced.')
         nbins_kperp = kperp_bins.size
         dk_perp = np.diff(kperp_bins).mean()
         kperp_bin_edges = np.arange(kperp_bins.min()-dk_perp/2,
@@ -770,6 +772,8 @@ class UVWindow:
         else:
             self.check_kunits(kpara_bins)
         kpara_bins = np.array(kpara_bins.value)
+        if not np.isclose(np.diff(kpara_bins),np.diff(kpara_bins)[0]).all():
+            warnings.warn('kpara_bins must be linearly spaced.')
         nbins_kpara = kpara_bins.size
         dk_para = np.diff(kpara_bins).mean()
         kpara_bin_edges = np.arange(kpara_bins.min()-dk_para/2,
@@ -832,7 +836,7 @@ class UVWindow:
             return cyl_wf
 
     def cylindrical_to_spherical(self, cyl_wf, kbins, ktot, bl_lens,
-                              bl_weights=None):
+                                 bl_weights=None):
         """
         Take spherical average of cylindrical window functions.
 
@@ -847,7 +851,7 @@ class UVWindow:
             If only one bl_lens is given, then axis 0 can be omitted.
         kbins : array-like astropy.quantity with units
             1D float array of ascending |k| bin centers in [h] Mpc^-1 units.
-            Used for spherical binning.
+            Used for spherical binning. Must be linearly spaced.
         ktot : array_like
             2-dimensional array giving the magnitude of k corresponding to
             kperp and kpara in cyl_wf.
@@ -864,8 +868,8 @@ class UVWindow:
         wf_spherical : array
             Array of spherical window functions.
             Shape (nbinsk, nbinsk).
-        kweights : array
-            Returns number of k-modes per k-bin.
+        weighted_k : array
+            Returns weighted k-modes.
         """
         # check bl_lens and bl_weights are consistent
         bl_lens = bl_lens if isinstance(bl_lens, (list, tuple, np.ndarray)) else [bl_lens]
@@ -893,6 +897,8 @@ class UVWindow:
             "must feed array of k bins for spherical average"
         self.check_kunits(kbins)  # check k units
         kbins = np.array(kbins.value)
+        if not np.isclose(np.diff(kbins),np.diff(kbins)[0]).all():
+            warnings.warn('kbins must be linearly spaced.')
         nbinsk = kbins.size
         dk = np.diff(kbins).mean()
         kbin_edges = np.arange(kbins.min()-dk/2, kbins.max()+dk, step=dk)
@@ -906,11 +912,12 @@ class UVWindow:
 
         # take average
         wf_spherical = np.zeros((nbinsk, nbinsk))
-        kweights = np.zeros(nbinsk, dtype=int)
+        kweights, weighted_k = np.zeros(nbinsk, dtype=int), np.zeros(nbinsk)
         for m1 in range(nbinsk):
-            mask2 = ((kbin_edges[m1] <= kmags) & (kmags < kbin_edges[m1+1])).astype(int)
+            mask2 = (kbin_edges[m1] <= kmags) & (kmags < kbin_edges[m1+1])
             if np.any(mask2):
-                mask2 = mask2*bl_weights[:, None] #add weights for redundancy
+                weighted_k[m1] = np.mean(kmags[mask2])
+                mask2 = mask2.astype(int)*bl_weights[:, None] #add weights for redundancy
                 kweights[m1] = np.sum(mask2) 
                 wf_temp = np.sum(cyl_wf*mask2[:,:,None,None], axis=(0, 1))/np.sum(mask2)
                 if np.sum(wf_temp) > 0.: 
@@ -926,11 +933,11 @@ class UVWindow:
             warnings.warn('Some spherical bins are empty. '
                           'Add baselines or expand spectral window.')
 
-        return wf_spherical, kweights
+        return wf_spherical, weighted_k
 
     def get_spherical_wf(self, kbins, bl_lens, bl_weights=None,
                          kperp_bins=None, kpara_bins=None,
-                         return_weights=False,
+                         return_weighted_k=False,
                          verbose=None):
         """
         Get spherical window functions for a UVWindow object.
@@ -960,9 +967,8 @@ class UVWindow:
             1D float array of ascending k_parallel bin centers.
             Used for cylindrical binning.
             Make sure the values are consistent with :attr:`little_h`.
-        return_weights : bool, optional
-            Save the weights associated with the different kbins when
-            spherically binning the window functions.
+        return_weighted_k : bool, optional
+            Return the weighted k-mode corresponding to each bin.
             Default is False.
         verbose : bool, optional
             If True, print progress, warnings and debugging info to stdout.
@@ -974,9 +980,9 @@ class UVWindow:
         wf_spherical : array
             Array of spherical window functions.
             Shape (nbinsk, nbinsk).
-        kweights : array
-            If return_weights is True.
-            Returns number of k-modes per k-bin.
+        weighted_k : array
+            If return_weighted_k is True.
+            Returns weighted k-modes corresponding to each k-bin.
         """
         # INITIALISE PARAMETERS
 
@@ -1002,6 +1008,8 @@ class UVWindow:
         else:
             self.check_kunits(kperp_bins)
         kperp_bins = np.array(kperp_bins.value)
+        if not np.isclose(np.diff(kperp_bins),np.diff(kperp_bins)[0]).all():
+            warnings.warn('kperp_bins must be linearly spaced.')
         nbins_kperp = kperp_bins.size
         dk_perp = np.diff(kperp_bins).mean()
         kperp_bin_edges = np.arange(kperp_bins.min()-dk_perp/2,
@@ -1027,6 +1035,8 @@ class UVWindow:
         else:
             self.check_kunits(kpara_bins)
         kpara_bins = np.array(kpara_bins.value)
+        if not np.isclose(np.diff(kpara_bins),np.diff(kpara_bins)[0]).all():
+            warnings.warn('kpara_bins must be linearly spaced.')
         nbins_kpara = kpara_bins.size
         dk_para = np.diff(kpara_bins).mean()
         kpara_bin_edges = np.arange(kpara_bins.min() - dk_para/2,
@@ -1050,6 +1060,8 @@ class UVWindow:
         assert kbins.value.size > 1, \
             "must feed array of k bins for spherical average"
         nbinsk = kbins.value.size
+        if not np.isclose(np.diff(kbins),np.diff(kbins)[0]).all():
+            warnings.warn('kbins must be linearly spaced.')
         dk = np.diff(kbins.value).mean()
         kbin_edges = np.arange(kbins.value.min()-dk/2,
                                kbins.value.max()+dk,
@@ -1064,7 +1076,6 @@ class UVWindow:
         # COMPUTE THE WINDOW FUNCTIONS
         # get cylindrical window functions for each baseline length considered
         # as a function of (kperp, kpara)
-        # the kperp and kpara bins are given as global parameters
         cyl_wf = np.zeros((nbls, self.Nfreqs, nbins_kperp, nbins_kpara))
         for ib in range(nbls):
             if verbose:
@@ -1077,12 +1088,12 @@ class UVWindow:
             sys.stdout.write('\rComputing for blg {:d} of {:d}... \n'.format(nbls, nbls))
 
         # perform spherical binning
-        wf_spherical, kweights = self.cylindrical_to_spherical(cyl_wf,
+        wf_spherical, weighted_k = self.cylindrical_to_spherical(cyl_wf,
                                                             kbins, ktot,
                                                             bl_lens, bl_weights)
 
-        if return_weights:
-            return wf_spherical, kweights
+        if return_weighted_k:
+            return wf_spherical, weighted_k
         else:
             return wf_spherical
 
@@ -1157,7 +1168,6 @@ class UVWindow:
 
         # get cylindrical window functions for each baseline length considered
         # as a function of (kperp, kpara)
-        # the kperp and kpara bins are given as global parameters
         cyl_wf = np.zeros((nbls, self.Nfreqs, nbins_kperp, nbins_kpara))
         for ib in range(nbls):
             cyl_wf[ib, :, :, :] = self.get_cylindrical_wf(bl_lens[ib],
