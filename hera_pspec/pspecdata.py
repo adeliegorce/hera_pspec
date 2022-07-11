@@ -1501,7 +1501,7 @@ class PSpecData(object):
             sinc_matrix = np.sinc(sinc_matrix / np.float(nfreq))
 
         iR1Q1, iR2Q2 = {}, {}
-        if (exact_norm):
+        if exact_norm:
             integral_beam = self.get_integral_beam(pol)
             del_tau = np.median(np.diff(self.delays()))*1e-9
         if exact_norm:
@@ -1524,11 +1524,10 @@ class PSpecData(object):
             # so we need to sandwhich it between R_1^\dagger and R_2
             iR1Q1[ch] = np.dot(np.conj(R1).T, Q1) # R_1 Q_alt
             iR2Q2[ch] = np.dot(R2, Q2) # R_2 Q
-
         for i in range(self.spw_Ndlys): # this loop goes as nchan^4
             for j in range(self.spw_Ndlys):
                 # tr(R_2 Q_i R_1 Q_j)
-                H[i,j] = np.einsum('ab,ba', iR1Q1[i], iR2Q2[j])
+                H[i, j] = np.einsum('ab,ba', iR1Q1[i], iR2Q2[j])
 
         # check if all zeros, in which case turn into identity
         if np.count_nonzero(H) == 0:
@@ -3259,13 +3258,12 @@ class PSpecData(object):
                     if norm == 'V^-1/2':
                         V_mat = self.get_unnormed_V(key1, key2, exact_norm=exact_norm, pol = pol)
                         Mv, Wv = self.get_MW(Gv, Hv, mode=norm, band_covar=V_mat, exact_norm=exact_norm)
-                    elif isinstance(norm,np.ndarray):
+                    elif isinstance(norm, np.ndarray):
                         Mv = np.copy(norm)
-                        Wv = np.dot(Mv,Hv)
+                        Wv = np.dot(Mv, Hv)
                     else:
                         Mv, Wv = self.get_MW(Gv, Hv, mode=norm, exact_norm=exact_norm)
                     pv = self.p_hat(Mv, qv)
-
                     # Multiply by scalar
                     if self.primary_beam != None:
                         if verbose: print("  Computing and multiplying scalar...")
@@ -3273,7 +3271,7 @@ class PSpecData(object):
 
                     # Wide bin adjustment of scalar, which is only needed for
                     # the diagonal norm matrix mode (i.e., norm = 'I')
-                    if (norm == 'I' or isinstance(norm,np.ndarray))  and not(exact_norm):
+                    if (norm == 'I' or isinstance(norm, np.ndarray)) and not(exact_norm):
                         sa = self.scalar_delay_adjustment(Gv=Gv, Hv=Hv)
                         if isinstance(sa, (np.float, float)):
                             pv *= sa
@@ -3289,19 +3287,16 @@ class PSpecData(object):
                                                            pol=pol,
                                                            model=cov_model,
                                                            known_cov=known_cov, )
-
                         if self.primary_beam != None:
                             cov_real = cov_real * (scalar)**2.
                             cov_imag = cov_imag * (scalar)**2.
-
-                        if norm == 'I' and not(exact_norm):
+                        if (norm == 'I' or isinstance(norm,np.ndarray)) and not(exact_norm):
                             if isinstance(sa, (np.float, float)):
                                 cov_real = cov_real * (sa)**2.
                                 cov_imag = cov_imag * (sa)**2.
                             else:
                                 cov_real = cov_real * np.outer(sa, sa)[None]
                                 cov_imag = cov_imag * np.outer(sa, sa)[None]
-
                         if not return_q:
                             if store_cov:
                                 pol_cov_real.extend(np.real(cov_real).astype(np.float64))
@@ -3316,7 +3311,6 @@ class PSpecData(object):
                             if store_cov_diag:
                                 stats = np.sqrt(np.diagonal(np.real(cov_q_real), axis1=1, axis2=2)) + 1.j*np.sqrt(np.diagonal(np.real(cov_q_imag), axis1=1, axis2=2))
                                 pol_stats_array_cov_model.extend(stats)
-
                     # store the window_function
                     if store_window:
                         pol_window_function.extend(np.repeat(Wv[np.newaxis,:,:], qv.shape[1], axis=0).astype(np.float64))
