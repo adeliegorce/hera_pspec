@@ -257,8 +257,9 @@ class Test_UVWindow(unittest.TestCase):
         ds = PSpecData(dsets=[uvd, uvd], wgts=[None, None], beam=uvb)
         ds_nocosmo = PSpecData(dsets=[uvd, uvd], wgts=[None, None])
         # choose baselines
-        baselines = [uvd.baseline_to_antnums(bl) for bl in [uvd.baseline_array[0]]]
-        baselines1, baselines2, blpairs = utils.construct_blpairs(baselines, exclude_permutations=False)
+        baselines1, baselines2, blpairs = utils.construct_blpairs(uvd.get_antpairs()[1:],
+                                                                  exclude_permutations=False,
+                                                                  exclude_auto_bls=True)
         # compute ps
         uvp = ds.pspec(baselines1, baselines2, dsets=(0, 1), pols=[self.polpair], 
                        spw_ranges=(175,195), taper=self.taper,verbose=self.verbose)
@@ -274,13 +275,13 @@ class Test_UVWindow(unittest.TestCase):
         # if cross polarisation
         test = uvwindow.UVWindow.from_uvpspec(uvp_crosspol, ipol=0, spw=0, 
                                               ftfile=os.path.join(DATA_PATH, basename))
+        # if no cosmo, use default
+        uvw_ps = uvwindow.UVWindow.from_uvpspec(uvp_nocosmo, ipol=0, spw=0, verbose=True,
+                                                ftfile=os.path.join(DATA_PATH, basename))
 
         # raise error if no ftfile as option is not implemented yet
         pytest.raises(NotImplementedError, uvwindow.UVWindow.from_uvpspec, uvp=uvp,
                       ipol=0, spw=0, ftfile=None, verbose=False)
-        # raise error if no cosmo in uvp
-        pytest.raises(AssertionError, uvwindow.UVWindow.from_uvpspec, uvp=uvp_nocosmo,
-                      ipol=0, spw=0, ftfile=os.path.join(DATA_PATH, basename), verbose=False)
         # raise error if spw not within uvp.Nspws
         pytest.raises(AssertionError, uvwindow.UVWindow.from_uvpspec, uvp=uvp_nocosmo,
                       ipol=0, spw=2, ftfile=os.path.join(DATA_PATH, basename))
@@ -430,6 +431,13 @@ class Test_UVWindow(unittest.TestCase):
                                                      return_bins='unweighted')
         assert np.all(cyl_wf2 == cyl_wf)
         assert np.all(kperp2 == kperp)  # unweighted option to return_bins
+        # warning raised if kperp_bins not linearly spaced
+        kperp_log = np.logspace(-2, 0, 100)
+        _, _, _ = test.get_cylindrical_wf(bl_len,
+                                          kperp_bins=kperp_log*test.kunits,
+                                          kpara_bins=None,
+                                          return_bins='unweighted')
+
         # kpara bins
         _, kpara3, cyl_wf3 = test.get_cylindrical_wf(bl_len,
                                                      kperp_bins=None,
@@ -437,6 +445,12 @@ class Test_UVWindow(unittest.TestCase):
                                                      return_bins='unweighted')
         assert np.all(cyl_wf3 == cyl_wf)
         assert np.all(kpara == kpara3)
+        # warning raised if kpara_bins not linearly spaced
+        kpara_log = np.logspace(-1, 1, 100)
+        _, _, _ = test.get_cylindrical_wf(bl_len,
+                                          kperp_bins=None,
+                                          kpara_bins=kpara_log*test.kunits,
+                                          return_bins='unweighted')
 
         # test filling array by delay symmetry for odd number of delays
         ft_beam_test = uvwindow.FTBeam.from_file(ftfile=self.ft_file, 
@@ -459,16 +473,16 @@ class Test_UVWindow(unittest.TestCase):
         ktot = np.sqrt(kperp[:, None]**2+kpara**2)
         
         # proper usage
-        sph_wf, kweights = test.cylindrical_to_spherical(cyl_wf=cyl_wf, 
-                                                      kbins=self.kbins, 
-                                                      ktot=ktot, 
-                                                      bl_lens=bl_len,
-                                                      bl_weights=[2.])
-        sph_wf, kweights = test.cylindrical_to_spherical(cyl_wf=cyl_wf[None], 
-                                                      kbins=self.kbins, 
-                                                      ktot=ktot, 
-                                                      bl_lens=bl_len,
-                                                      bl_weights=None)
+        sph_wf, weighted_k = test.cylindrical_to_spherical(cyl_wf=cyl_wf, 
+                                                          kbins=self.kbins, 
+                                                          ktot=ktot, 
+                                                          bl_lens=bl_len,
+                                                          bl_weights=[2.])
+        sph_wf, weighted_k = test.cylindrical_to_spherical(cyl_wf=cyl_wf[None], 
+                                                          kbins=self.kbins, 
+                                                          ktot=ktot, 
+                                                          bl_lens=bl_len,
+                                                          bl_weights=None)
 
         # ktot has shape different from cyl_wf
         pytest.raises(AssertionError, test.cylindrical_to_spherical, cyl_wf=cyl_wf,
@@ -488,10 +502,17 @@ class Test_UVWindow(unittest.TestCase):
         # raise warning if empty bins
         kbins_test = np.arange(2,5,step=.5)*test.kunits
         test.verbose = True
-        sph_wf, kweights = test.cylindrical_to_spherical(cyl_wf=cyl_wf, 
-                                                      kbins=kbins_test, 
-                                                      ktot=ktot, 
-                                                      bl_lens=bl_len)        
+        sph_wf, weighted_k = test.cylindrical_to_spherical(cyl_wf=cyl_wf, 
+                                                          kbins=kbins_test, 
+                                                          ktot=ktot, 
+                                                          bl_lens=bl_len)        
+
+        # raise warning if kbins not linearly spaced
+        kbins_log = np.logspace(-2, 2, 20)
+        _, _ = test.cylindrical_to_spherical(cyl_wf=cyl_wf, 
+                                             kbins=kbins_log*test.kunits, 
+                                             ktot=ktot, 
+                                             bl_lens=bl_len)  
 
     def test_get_spherical_wf(self):
 
@@ -500,12 +521,12 @@ class Test_UVWindow(unittest.TestCase):
         # initialise object from keywords
         test = uvwindow.UVWindow(ftbeam_obj=self.ft_beam_obj_spw)
 
-        WF, counts = test.get_spherical_wf(kbins=self.kbins,
+        WF, weighted_k = test.get_spherical_wf(kbins=self.kbins,
                                            bl_lens=self.lens[:1],
                                            bl_weights=[1],
                                            kperp_bins=None,
                                            kpara_bins=None,
-                                           return_weights=True,
+                                           return_weighted_k=True,
                                            verbose=True)
         kperp_bins = test.get_kperp_bins(self.lens[:1])
         kpara_bins = test.get_kpara_bins(test.freq_array)
@@ -515,7 +536,7 @@ class Test_UVWindow(unittest.TestCase):
                                    kpara_bins=kpara_bins,
                                    bl_lens=self.lens[:1],
                                    bl_weights=None,
-                                   return_weights=False,
+                                   return_weighted_k=False,
                                    verbose=None)
 
         # check inputs
@@ -538,6 +559,19 @@ class Test_UVWindow(unittest.TestCase):
                                                         step=kpara_centre)
                                    * test.kunits,
                                    bl_lens=self.lens[:1])
+        # warning raised if kbins not linearly spaced
+        kperp_log = np.logspace(-2, 0, 100)
+        _ = test.get_spherical_wf(kbins=self.kbins, 
+                                  kperp_bins=kperp_log*test.kunits,
+                                  bl_lens=self.lens[:1])
+        kpara_log = np.logspace(-1, 1, 100)
+        _ = test.get_spherical_wf(kbins=self.kbins, 
+                                  kpara_bins=kpara_log*test.kunits,
+                                  bl_lens=self.lens[:1])
+        kbins_log = np.logspace(-2, 2, 20)
+        _ = test.get_spherical_wf(kbins=kbins_log*test.kunits,
+                                  bl_lens=self.lens[:1])
+
 
     def test_check_kunits(self):
 
