@@ -3274,11 +3274,12 @@ class PSpecData(object):
                     if norm == 'V^-1/2':
                         V_mat = self.get_unnormed_V(key1, key2, exact_norm=exact_norm, pol = pol)
                         Mv, Wv = self.get_MW(Gv, Hv, mode=norm, band_covar=V_mat, exact_norm=exact_norm)
-                    elif isinstance(norm, np.ndarray):
-                        Mv = np.copy(norm)
-                        Wv = np.dot(Mv, Hv)
-                    else:
+                    elif isinstance(norm, str):
                         Mv, Wv = self.get_MW(Gv, Hv, mode=norm, exact_norm=exact_norm)
+                    elif isinstance(norm, dict):
+                        assert (spw, blp) in norm.keys(), f"key {key} not in M dictionary"
+                        Mv = norm[(spw, blp)]
+                        Wv = np.dot(Mv, Hv)                        
                     pv = self.p_hat(Mv, qv)
                     # Multiply by scalar
                     if self.primary_beam != None:
@@ -3287,7 +3288,7 @@ class PSpecData(object):
 
                     # Wide bin adjustment of scalar, which is only needed for
                     # the diagonal norm matrix mode (i.e., norm = 'I')
-                    if (norm == 'I' or isinstance(norm, np.ndarray)) and not(exact_norm):
+                    if (norm == 'I' or isinstance(norm, dict)) and not(exact_norm):
                         sa = self.scalar_delay_adjustment(Gv=Gv, Hv=Hv)
                         if isinstance(sa, (np.float, float)):
                             pv *= sa
@@ -3306,7 +3307,7 @@ class PSpecData(object):
                         if self.primary_beam != None:
                             cov_real = cov_real * (scalar)**2.
                             cov_imag = cov_imag * (scalar)**2.
-                        if (norm == 'I' or isinstance(norm,np.ndarray)) and not(exact_norm):
+                        if (norm == 'I' or isinstance(norm, dict)) and not(exact_norm):
                             if isinstance(sa, (np.float, float)):
                                 cov_real = cov_real * (sa)**2.
                                 cov_imag = cov_imag * (sa)**2.
