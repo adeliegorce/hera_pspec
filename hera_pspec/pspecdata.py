@@ -3278,7 +3278,7 @@ class PSpecData(object):
                         Mv, Wv = self.get_MW(Gv, Hv, mode=norm, exact_norm=exact_norm)
                     elif isinstance(norm, dict):
                         assert (i, blp) in norm.keys(), f"key {(i, blp)} not in M dictionary"
-                        Mv = norm[(spw, blp)]
+                        Mv = norm[(i, blp)]
                         Wv = np.dot(Mv, Hv)                        
                     pv = self.p_hat(Mv, qv)
                     # Multiply by scalar
