@@ -13,7 +13,7 @@ import warnings
 import json
 import uvtools.dspec as dspec
 
-from . import uvpspec, utils, version, pspecbeam, container, uvpspec_utils as uvputils
+from . import uvpspec, utils, version, __version__, pspecbeam, container, uvpspec_utils as uvputils
 
 
 class PSpecData(object):
@@ -2726,8 +2726,9 @@ class PSpecData(object):
               input_data_weight='identity', norm='I', taper='none',
               sampling=False, little_h=True, spw_ranges=None, symmetric_taper=True,
               baseline_tol=1.0, store_cov=False, store_cov_diag=False,
-              return_q=False, store_window=True, verbose=True,
-              filter_extensions=None, exact_norm=False, history='', r_params=None,
+              return_q=False, store_window=True, exact_windows=False, 
+              ftbeam_file=None, verbose=True, filter_extensions=None,
+              exact_norm=False, history='', r_params=None,
               cov_model='empirical', known_cov=None, allow_fft=False):
         """
         Estimate the delay power spectrum from a pair of datasets contained in
@@ -2836,6 +2837,17 @@ class PSpecData(object):
         store_window : bool, optional
             If True, store the window function of the bandpowers.
             Default: True
+
+        exact_windows : bool, optional
+            If True, compute exact window functions and sets store_window=True.
+            Default: False
+
+        ftbeam_file : str, optional
+            Definition of the beam Fourier transform to be used.
+            Options include;
+                - Root name of the file to use, without the polarisation
+                Ex : FT_beam_HERA_dipole (+ path)
+                - '' for computation from beam simulations (slow)
 
         cov_model : string, optional
             Type of covariance model to calculate, if not cached.
@@ -3054,6 +3066,10 @@ class PSpecData(object):
             store_cov = False
             # Only store diagnonal parts of the cov_array to save the disk space if store_cov_diag==True,
             # no matter what the initial choice for store_cov.
+
+        if exact_windows and not store_window:
+            warnings.warn('exact_windows is True... setting store_window to True.')
+            store_window = True
 
         # setup polarization selection
         if isinstance(pols, (tuple, str)): pols = [pols]
@@ -3446,8 +3462,8 @@ class PSpecData(object):
         uvp.Npols = len(spw_polpair)
         uvp.scalar_array = np.array(sclr_arr)
         uvp.channel_width = dset1.channel_width  # all dsets validated to agree
-        uvp.weighting = input_data_weight
         uvp.exact_windows = False
+        uvp.weighting = input_data_weight
         uvp.vis_units, uvp.norm_units = self.units(little_h=little_h)
         uvp.telescope_location = dset1.telescope_location
         filename1 = json.loads(dset1.extra_keywords.get('filename', '""'))
@@ -3462,18 +3478,25 @@ class PSpecData(object):
         uvp.label_2_array = np.ones((uvp.Nspws, uvp.Nblpairts, uvp.Npols), np.int) \
                             * uvp.labels.index(label2)
         uvp.labels = np.array(uvp.labels, np.str)
-        uvp.history = "UVPSpec written on {} with hera_pspec git hash {}\n{}\n" \
-                      "dataset1: filename: {}, label: {}, cal: {}, history:\n{}\n{}\n" \
-                      "dataset2: filename: {}, label: {}, cal: {}, history:\n{}\n{}\n" \
-                      "".format(datetime.datetime.utcnow(), version.git_hash, '-'*20,
-                                filename1, label1, cal1, dset1.history, '-'*20,
-                                filename2, label2, cal2, dset2.history, '-'*20)
         uvp.r_params = uvputils.compress_r_params(r_params)
         uvp.taper = taper
         if not return_q:
             uvp.norm = norm
         else:
             uvp.norm = 'Unnormalized'
+        # save version of hera_pspec with backward compatibility
+        try:
+            version.git_hash
+        except AttributeError:
+            hp_version = __version__
+        else:
+            hp_version = version.git_hash
+        uvp.history = "UVPSpec written on {} with hera_pspec git hash {}\n{}\n" \
+                      "dataset1: filename: {}, label: {}, cal: {}, history:\n{}\n{}\n" \
+                      "dataset2: filename: {}, label: {}, cal: {}, history:\n{}\n{}\n" \
+                      "".format(datetime.datetime.utcnow(), hp_version, '-'*20,
+                                filename1, label1, cal1, dset1.history, '-'*20,
+                                filename2, label2, cal2, dset2.history, '-'*20)
 
         if self.primary_beam is not None:
             # attach cosmology
@@ -3493,6 +3516,7 @@ class PSpecData(object):
                         [ (k, np.ones_like(uvp.integration_array[k], np.float))
                          for k in uvp.integration_array.keys() ] )
 
+        # covariance
         if store_cov:
             uvp.cov_array_real = cov_array_real
             uvp.cov_array_imag = cov_array_imag
@@ -3500,8 +3524,16 @@ class PSpecData(object):
         if store_cov_diag:
             uvp.stats_array = odict()
             uvp.stats_array[cov_model+"_diag"] = stats_array_cov_model
+
+        # window functions
         if store_window:
-            uvp.window_function_array = window_function_array
+            if exact_windows:
+                # compute and store exact window functions
+                uvp.get_exact_window_functions(ftbeam_file=ftbeam_file, verbose=verbose, 
+                                               x_orientation=self.dsets[0].x_orientation,
+                                               inplace=True)
+            else:
+                uvp.window_function_array = window_function_array
 
         # run check
         uvp.check()
@@ -3702,7 +3734,8 @@ def pspec_run(dsets, filename, dsets_std=None, cals=None, cal_flag=True,
               input_data_weight='identity', norm='I', taper='none', sampling=False,
               exclude_auto_bls=False, exclude_cross_bls=False, exclude_permutations=True,
               Nblps_per_group=None, bl_len_range=(0, 1e10),
-              bl_deg_range=(0, 180), bl_error_tol=1.0, store_window=True,
+              bl_deg_range=(0, 180), bl_error_tol=1.0, 
+              store_window=True, exact_windows=False, ftbeam_file=None,
               beam=None, cosmo=None, interleave_times=False, rephase_to_dset=None,
               trim_dset_lsts=False, broadcast_dset_flags=True,
               time_thresh=0.2, Jy2mK=False, overwrite=True, symmetric_taper=True,
@@ -3829,6 +3862,17 @@ def pspec_run(dsets, filename, dsets_std=None, cals=None, cal_flag=True,
     store_window : bool
         If True, store computed window functions (warning, these can be large!)
         in UVPSpec objects.
+
+    exact_windows : bool, optional
+        If True, compute exact window functions and sets store_window=True.
+        Default: False
+
+    ftbeam_file : str, optional
+        Definition of the beam Fourier transform to be used.
+        Options include;
+            - Root name of the file to use, without the polarisation
+            Ex : FT_beam_HERA_dipole (+ path)
+            - '' for computation from beam simulations (slow)
 
     beam : PSpecBeam object, UVBeam object or string
         Beam model to use in OQE. Can be a PSpecBeam object or a filepath
@@ -4228,7 +4272,8 @@ def pspec_run(dsets, filename, dsets_std=None, cals=None, cal_flag=True,
                        exact_norm=exact_norm, sampling=sampling,
                        return_q=return_q, cov_model=cov_model, known_cov=known_cov,
                        norm=norm, taper=taper, history=history, verbose=verbose,
-                       filter_extensions=filter_extensions, store_window=store_window)
+                       filter_extensions=filter_extensions, store_window=store_window,
+                       exact_windows=exact_windows, ftbeam_file=ftbeam_file)
 
         # Store output
         psname = '{}_x_{}{}'.format(dset_labels[dset_idxs[0]],
